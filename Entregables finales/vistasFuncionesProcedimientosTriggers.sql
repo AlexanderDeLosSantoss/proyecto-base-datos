@@ -3,6 +3,8 @@ USE rrhh_itn;
 DROP VIEW IF EXISTS vista_empleado_detalle;
 DROP VIEW IF EXISTS vista_contratos_activos;
 DROP VIEW IF EXISTS vista_nomina_departamento;
+DROP VIEW IF EXISTS vista_directorio_empleados;
+DROP VIEW IF EXISTS vista_reporte_nomina_contabilidad;
 DROP FUNCTION IF EXISTS fn_calcular_antiguedad;
 DROP FUNCTION IF EXISTS fn_salario_vigente;
 DROP PROCEDURE IF EXISTS sp_registrar_nuevo_contrato;
@@ -11,7 +13,6 @@ DROP PROCEDURE IF EXISTS sp_dar_baja_empleado;
 DROP TRIGGER IF EXISTS trg_valida_contrato_activo_unico;
 DROP TRIGGER IF EXISTS trg_auditoria_contrato;
 DROP TRIGGER IF EXISTS trg_auditoria_empleado;
-
 
 -- VISTAS
 
@@ -65,9 +66,41 @@ JOIN departamento d ON p.id_departamento = d.id
 WHERE n.estado_pago <> 'ANULADO'
 GROUP BY d.id, d.nombre, n.periodo;
 
+-- Directorio público: sin cédula ni datos bancarios/salariales, para usuarios de nivel bajo
+CREATE VIEW vista_directorio_empleados AS
+SELECT
+    e.id AS id_empleado,
+    CONCAT(e.nombres, ' ', e.apellidos) AS nombre_completo,
+    e.email,
+    e.telefono,
+    p.nombre AS puesto,
+    d.nombre AS departamento,
+    s.ciudad AS ubicacion_sede
+FROM empleado e
+JOIN puesto p ON e.id_puesto = p.id
+JOIN departamento d ON p.id_departamento = d.id
+JOIN sede s ON d.id_sede = s.id
+WHERE e.estado = 'ACTIVO';
+
+-- Reporte de nómina por pago individual, para el departamento de Contabilidad
+CREATE VIEW vista_reporte_nomina_contabilidad AS
+SELECT
+    n.id AS folio_nomina,
+    n.periodo,
+    n.fecha_pago,
+    CONCAT(e.nombres, ' ', e.apellidos) AS empleado,
+    d.nombre AS departamento,
+    n.salario_bruto,
+    (n.deduccion_tss + n.deduccion_afp + n.deduccion_isr) AS total_deducciones,
+    (n.bonificaciones + n.horas_extras) AS total_ingresos_extra,
+    n.salario_neto,
+    n.estado_pago
+FROM nomina n
+JOIN empleado e ON n.id_empleado = e.id
+JOIN puesto p ON e.id_puesto = p.id
+JOIN departamento d ON p.id_departamento = d.id;
 
 -- FUNCIONES
-
 
 DELIMITER //
 CREATE FUNCTION fn_calcular_antiguedad(p_fecha_ingreso DATE)
@@ -93,9 +126,7 @@ BEGIN
 END //
 DELIMITER ;
 
-
 -- PROCEDIMIENTOS ALMACENADOS
-
 
 -- Registra un nuevo contrato (renovación, promoción o cambio de puesto),
 -- inactivando el anterior y sincronizando el puesto vigente del empleado.
@@ -133,7 +164,6 @@ END //
 DELIMITER ;
 
 -- Procesa la nómina de un empleado para un periodo, calculando TSS, AFP e ISR
--- con tasas fijas a nivel de esquema. Exige contrato activo.
 DELIMITER //
 CREATE PROCEDURE sp_procesar_nomina(
     IN p_id_empleado INT,
@@ -192,7 +222,7 @@ END //
 DELIMITER ;
 
 -- Da de baja lógica a un empleado: inactiva su contrato vigente y su estado.
--- No se permite el borrado físico para mantener historial.
+-- No se permite el borrado físico.
 DELIMITER //
 CREATE PROCEDURE sp_dar_baja_empleado(
     IN p_id_empleado INT,
@@ -218,7 +248,6 @@ BEGIN
     COMMIT;
 END //
 DELIMITER ;
-
 
 -- TRIGGERS
 
